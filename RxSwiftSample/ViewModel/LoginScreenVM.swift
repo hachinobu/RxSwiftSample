@@ -15,7 +15,7 @@ class LoginScreenVM {
     enum RequestState {
         case None
         case Requesting
-        case Complete
+        case Success
         case Error
         
         func isRequesting() -> Bool {
@@ -25,6 +25,18 @@ class LoginScreenVM {
         func requestState() -> (isHidden: Bool, isAnimation: Bool) {
             return self.isRequesting() ? (false, true) : (true, false)
         }
+        
+        func fetchFinishRequestMessage() -> String {
+            switch self {
+            case .Success:
+                return "ログインに成功しました"
+            case .Error:
+                return "ログインに失敗しました"
+            default:
+                return ""
+            }
+        }
+        
     }
     
     let reqState = BehaviorSubject<RequestState>(value: .None)
@@ -35,6 +47,7 @@ class LoginScreenVM {
     let userIdAndPassword: PublishSubject<(loginId: String, password: String)> = PublishSubject<(loginId: String, password: String)>()
     
     var loginButtonState: Observable<(alpha: CGFloat, enable: Bool)> {
+        
         return Observable.combineLatest(loginIdText, passwordText, reqState) { [weak self] (loginId, password, reqState) in
             guard loginId.characters.count > 3 && password.characters.count > 3 && !reqState.isRequesting() else {
                 return (0.5, false)
@@ -42,6 +55,7 @@ class LoginScreenVM {
             self?.userIdAndPassword.onNext((loginId, password))
             return (1.0, true)
         }
+        
     }
     
     var validateErrorText: Observable<String> {
@@ -70,27 +84,43 @@ class LoginScreenVM {
         return reqState.map { $0.requestState() }
     }
     
-    var requestAPI: Observable<Void> {
-        
-        return Observable.combineLatest(loginTap, loginIdText, passwordText) { (isTap, loginId, password) -> Void in
-            
-            guard isTap else {
-                return
-            }
-            
-            self.reqState.onNext(.Requesting)
-            let delay = 1.0 * Double(NSEC_PER_SEC)
-            let time  = dispatch_time(DISPATCH_TIME_NOW, Int64(delay))
-            
-            dispatch_after(time, dispatch_get_main_queue()) { [unowned self] in
-                self.reqState.onNext(.Complete)
-            }
-            
+    var successAlert: Observable<String> {
+        return reqState.map { (reqState) -> String in
+            return reqState.fetchFinishRequestMessage()
         }
     }
     
-    func tapButton() {
-        loginTap.onNext(true)
+    let disposeBag = DisposeBag()
+    
+    init() {
+        
+        loginTap.filter { $0 }
+            .withLatestFrom(userIdAndPassword)
+            .flatMap { (userIdAndPassword: (loginId: String, password: String)) -> Observable<Bool> in
+                
+                self.reqState.onNext(.Requesting)
+                return Observable.create { (observer) in
+                    
+                    let delay = 1.0 * Double(NSEC_PER_SEC)
+                    let time  = dispatch_time(DISPATCH_TIME_NOW, Int64(delay))
+                    
+                    dispatch_after(time, dispatch_get_main_queue()) { _ in
+                        if arc4random_uniform(2) == 0 {
+                            observer.onNext(true)
+                            return
+                        }
+                        observer.onNext(false)
+                    }
+                    
+                    return NopDisposable.instance
+                }
+                
+        }.subscribeNext { (result) -> Void in
+            
+            result ? self.reqState.onNext(.Success) : self.reqState.onNext(.Error)
+            
+        }.addDisposableTo(disposeBag)
+        
     }
     
 }
